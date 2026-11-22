@@ -7,7 +7,7 @@
 // In a trial the grader runs `node /bot/main.ts` with MAKEFUN_ENV_URL set, and then this file hands over to runner.ts
 // (the last lines below): keep that hand-over and runner.ts as they are, and write the CLI.
 
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const FORMATS = ['auto', 'unified', 'search-replace', 'v4a', 'json'];
@@ -310,14 +310,15 @@ function parseUnifiedPath(line: string): { path: string; isNull: boolean } {
 }
 
 function parseDiffGit(line: string): [string, string] | null {
-  if (!line.startsWith('diff --git a/')) return null;
-  const rest = line.slice('diff --git a/'.length);
+  const trimmed = line.replace(/ +$/, '');
+  if (!trimmed.startsWith('diff --git a/')) return null;
+  const rest = trimmed.slice('diff --git a/'.length);
   let fallback: [string, string] | null = null;
   let idx = rest.indexOf(' b/');
   while (idx >= 0) {
     const x = rest.slice(0, idx);
     const y = rest.slice(idx + 3);
-    if (x !== '' && y !== '') {
+    if (x.trim() !== '' && y.trim() !== '') {
       if (x === y) return [x, y];
       if (fallback === null) fallback = [x, y];
     }
@@ -518,6 +519,7 @@ function unifiedEdits(lines: string[], strict: boolean): Edit[] {
         }
       }
       edits.push((tree) => {
+        if (!sec.hdrOldNull && oldPath !== '' && !safe(oldPath)) throw new Fail('unsafe', oldPath);
         if (!safe(newPath)) throw new Fail('unsafe', newPath);
         if (tree.get(newPath) !== null) throw new Fail('exists', newPath);
         tree.now.set(newPath, joinFile({ br: '\n', lines: addLines, final: !lastAddNoEol }));
@@ -525,6 +527,7 @@ function unifiedEdits(lines: string[], strict: boolean): Edit[] {
     } else if (sec.hdrNewNull || sec.isDelete) {
       edits.push((tree) => {
         if (!safe(oldPath)) throw new Fail('unsafe', oldPath);
+        if (!sec.hdrNewNull && newPath !== '' && !safe(newPath)) throw new Fail('unsafe', newPath);
         if (tree.get(oldPath) === null) throw new Fail('missing', oldPath);
         tree.now.set(oldPath, null);
       });
@@ -581,17 +584,25 @@ function searchReplaceEdits(lines: string[], strict: boolean): Edit[] {
     }
     let sep = -1;
     for (let j = searchLine + 1; j < lines.length; j += 1) {
-      if (lines[j]!.trimEnd() === '=======') {
+      const m = lines[j]!.trimEnd();
+      if (m === '=======') {
         sep = j;
         break;
+      }
+      if (m === '>>>>>>> REPLACE' || m === '<<<<<<< SEARCH') {
+        throw new Exit2(`error: parse ${searchLine + 1}`);
       }
     }
     if (sep < 0) throw new Exit2(`error: parse ${searchLine + 1}`);
     let end = -1;
     for (let j = sep + 1; j < lines.length; j += 1) {
-      if (lines[j]!.trimEnd() === '>>>>>>> REPLACE') {
+      const m = lines[j]!.trimEnd();
+      if (m === '>>>>>>> REPLACE') {
         end = j;
         break;
+      }
+      if (m === '<<<<<<< SEARCH') {
+        throw new Exit2(`error: parse ${searchLine + 1}`);
       }
     }
     if (end < 0) throw new Exit2(`error: parse ${searchLine + 1}`);
@@ -869,7 +880,18 @@ function run(args: string[]): { code: number; out: string[] } {
   rows.sort((a, b) => Buffer.compare(Buffer.from(a.key), Buffer.from(b.key)));
   if (!check) {
     for (const c of changed) {
-      if (c.now === null) rmSync(c.p, { force: true });
+      if (c.now === null) {
+        rmSync(c.p, { force: true });
+        let dir = dirname(c.p);
+        while (dir !== '.' && dir !== '') {
+          try {
+            rmdirSync(dir);
+          } catch {
+            break;
+          }
+          dir = dirname(dir);
+        }
+      }
     }
     for (const c of changed) {
       if (c.now !== null) {
