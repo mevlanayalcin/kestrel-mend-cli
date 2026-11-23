@@ -584,25 +584,17 @@ function searchReplaceEdits(lines: string[], strict: boolean): Edit[] {
     }
     let sep = -1;
     for (let j = searchLine + 1; j < lines.length; j += 1) {
-      const m = lines[j]!.trimEnd();
-      if (m === '=======') {
+      if (lines[j]!.trimEnd() === '=======') {
         sep = j;
         break;
-      }
-      if (m === '>>>>>>> REPLACE' || m === '<<<<<<< SEARCH') {
-        throw new Exit2(`error: parse ${searchLine + 1}`);
       }
     }
     if (sep < 0) throw new Exit2(`error: parse ${searchLine + 1}`);
     let end = -1;
     for (let j = sep + 1; j < lines.length; j += 1) {
-      const m = lines[j]!.trimEnd();
-      if (m === '>>>>>>> REPLACE') {
+      if (lines[j]!.trimEnd() === '>>>>>>> REPLACE') {
         end = j;
         break;
-      }
-      if (m === '<<<<<<< SEARCH') {
-        throw new Exit2(`error: parse ${searchLine + 1}`);
       }
     }
     if (end < 0) throw new Exit2(`error: parse ${searchLine + 1}`);
@@ -702,7 +694,8 @@ function v4aEdits(lines: string[], strict: boolean): Edit[] {
         tree.now.set(targetPath, joinFile({ br: '\n', lines: addLines, final: true }));
       });
     } else if (sec.kind === 'delete') {
-      if (sec.body.length > 0) throw new Exit2(`error: parse ${sec.body[0]!.lineNo}`);
+      const bad = sec.body.find((item) => !blank(item.text));
+      if (bad !== undefined) throw new Exit2(`error: parse ${bad.lineNo}`);
       const targetPath = sec.path;
       edits.push((tree) => {
         if (!safe(targetPath)) throw new Fail('unsafe', targetPath);
